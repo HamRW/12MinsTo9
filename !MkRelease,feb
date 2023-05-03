@@ -1,0 +1,22 @@
+Set 12MinsTo9$BuildDir <Obey$Dir>.!12MinsTo9
+Set Alias$AddToRelease Copy <12MinsTo9$BuildDir>.%%0 <12MinsTo9$BuildDir>.^.Release.!12MinsTo9.%%0 ~C~V
+
+x wipe <12MinsTo9$BuildDir>.^.Release ~CR~V
+x wipe <12MinsTo9$BuildDir>.^.Release/zip ~CR~V
+
+cdir <12MinsTo9$BuildDir>.^.Release
+cdir <12MinsTo9$BuildDir>.^.Release.!12MinsTo9
+
+AddToRelease !Help
+AddToRelease !Run
+AddToRelease !RunImage
+AddToRelease !Sprites
+AddToRelease !Sprites22
+AddToRelease Templates
+
+Tokenize <12MinsTo9$BuildDir>.bas.!RunImage -out <Wimp$Scrap>
+Crunchie -input <Wimp$Scrap> -output <12MinsTo9$BuildDir>.^.Release.!12MinsTo9.!RunImage
+
+dir <12MinsTo9$BuildDir>.^.Release
+zip -r 12minsto9/zip !12MinsTo9
+

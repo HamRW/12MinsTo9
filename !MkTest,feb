@@ -1,0 +1,5 @@
+Set 12MinsTo9$BuildDir <Obey$Dir>.!12MinsTo9
+
+Tokenize <12MinsTo9$BuildDir>.bas.!RunImage -out <12MinsTo9$BuildDir>.!RunImage
+
+

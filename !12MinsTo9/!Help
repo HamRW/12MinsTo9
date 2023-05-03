@@ -1,0 +1,127 @@
+ _ ____  __  __ _          _____     ___  
+/ |___ \|  \/  (_)_ __  __|_   _|__ / _ \ 
+| | __) | |\/| | | '_ \/ __|| |/ _ \ (_) |
+| |/ __/| |  | | | | | \__ \| | (_) \__, |
+|_|_____|_|  |_|_|_| |_|___/|_|\___/  /_/
+
+12 Mins to 9 is a version of the popular 2048 puzzle game that runs in
+the RISC OS desktop. It is based on the original by Gabriele Cirulli.
+
+
+System requirements
+-------------------
+This game should run on RISC OS 3.1 or later. RISC OS 3.1 users who
+are not running the nested Window Manager will need the BorderUtils
+module, supplied with !NewLook or as part of PlingSystem on the RISC OS
+Open website.
+
+A 256-colour mode or better is recommended for the best appearance.
+
+
+How to play
+-----------
+When run, the !12MinsTo9 icon installs on the icon bar. Click SELECT or
+ADJUST on the icon to launch a new game.
+
+The game is played on a 4x4 grid. The game starts with two random tiles
+with a value of 2 or 4 placed on the grid.
+
+Slide the tiles left, right, up or down using the arrow buttons in the
+game window. Alternatively, click in the window to gain input focus,
+and you can use the keyboard cursor keys to move.
+
+The tiles will slide as far as they can go in the direction you choose.
+They will only stop if they collide with another tile or the edge of
+the grid.
+
+If two tiles of the same value collide, they will merge into one tile
+with the combined value of the two previous tiles. The value of the
+merged tile will be added to your score. See "Merging tiles" below for
+more on this.
+
+After every move, a new tile will be added to the grid, if there is
+room for it. There is a 90% chance of the tile being a 2, or a 10%
+chance of a 4.
+
+The aim of the game is to progressively combine tiles to get larger and
+larger numbers, until you reach the 2048 tile. The secondary aim is to
+score as many points as possible.
+
+The game ends when there are no further legal moves. This occurs when
+the grid is completely full and there are no adjacent tiles of the same
+value that can be merged.
+
+You can close the main window and the game will stay active. To start a
+new game from scratch, click Menu on the icon bar icon and choose "New
+game".
+
+
+Merging tiles
+-------------
+There are some subtleties to the tile merging you need to be aware of.
+
+Tiles can only merge once per turn. So for example, if you have a row
+of tiles as shown below...
+
++-----+-----+-----+-----+
+|  2  |  2  |  2  |  2  |
++-----+-----|-----+-----+
+ 
+...sliding to the right will produce:
+
++-----+-----+-----+-----+
+|     |     |  4  |  4  |
++-----+-----+-----+-----+
+
+Note that the two pairs of 2s merge, but the resulting pair of 4s will
+not merge. Of course, on the next turn you can slide again to merge
+them.
+
+The order that tiles merge depends on the direction you slide. So with
+these tiles:
+
++-----+-----+-----+-----+
++  8  |  8  |  8  |     |
++-----+-----+-----+-----+
+
+Sliding to the right gives:        Sliding to the left would give:
+
++-----+-----+-----+-----+          +-----+-----+-----+-----+
+|     |     |  8  |  16 |          |  16 |  8  |     |     |   
++-----+-----+-----+-----+          +-----+-----+-----+-----+
+(the two rightmost tiles merge)    (the two leftmost tiles merge)
+
+Of course, similar rules apply for sliding up and down.
+
+
+Contact
+-------
+Email RISCOSstuff@roberthampton.me.uk with any feedback or bug reports.
+
+Visit https://riscos.roberthampton.me.uk/ to download the latest
+versions of this and my other apps.
+
+
+Licence
+-------
+Copyright 2023 Robert Hampton.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Source
+------
+Source code is available on GitHub. https://github.com/HamRW
+
+
+History
+-------

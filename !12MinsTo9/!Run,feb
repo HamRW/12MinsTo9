@@ -1,0 +1,32 @@
+|   Copyright 2023 Robert Hampton
+|
+|   Licensed under the Apache License, Version 2.0 (the "License");
+|   you may not use this file except in compliance with the License.
+|   You may obtain a copy of the License at
+|
+|       http://www.apache.org/licenses/LICENSE-2.0
+|
+|   Unless required by applicable law or agreed to in writing, software
+|   distributed under the License is distributed on an "AS IS" BASIS,
+|   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+|   See the License for the specific language governing permissions and
+|   limitations under the License.
+
+Set 12MinsTo9$Dir <Obey$Dir>
+Set 12MinsTo9$Help <Obey$Dir>.!Help
+Set 12MinsTo9$Version "0.90"
+Set 12MinsTo9$Web "https://riscos.roberthampton.me.uk/"
+Set 12MinsTo9$Title "12 Mins to 9"
+Set 12MinsTo9$Publisher "Robert Hampton"
+Set 12MinsTo9$Description "Sliding tile puzzle game based on 2048."
+
+IconSprites <12MinsTo9$Dir>.!Sprites
+
+If "<12MinsTo9$Running>"="Yes" Then Error "12MinsTo9 is already running."
+RMEnsure UtilityModule 3.10 Error This application is suitable only for RISC OS 3.10 or later.
+
+| We need BorderUtils on RISC OS 3.1 because of a bug
+RMEnsure WindowManager 3.17 RMEnsure BorderUtils 0.00 RMLoad System:Modules.BorderUtil
+
+Wimpslot -min 64K -max 64K
+Run <12MinsTo9$Dir>.!RunImage

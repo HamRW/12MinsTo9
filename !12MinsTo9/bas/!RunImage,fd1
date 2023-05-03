@@ -1,0 +1,1101 @@
+REM ><12MinsTo9$Dir>.!RunImage
+REM Copyright 2023 Robert Hampton
+REM
+REM Licensed under the Apache License, Version 2.0 (the "License");
+REM you may not use this file except in compliance with the License.
+REM You may obtain a copy of the License at
+REM
+REM     http://www.apache.org/licenses/LICENSE-2.0
+REM
+REM Unless required by applicable law or agreed to in writing, software
+REM distributed under the License is distributed on an "AS IS" BASIS,
+REM WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+REM See the License for the specific language governing permissions and
+REM limitations under the License.
+REM
+ON ERROR ERROR EXT ERR,REPORT$+" ("+STR$ERL+")"
+DIM pollBlock% 255,miscBlock% 1023, msgBlock% 255
+outputToSprite%=FALSE
+PROCheap_init:PROCinitWimp:PROCinitProg
+ON ERROR PROCerror(ERR,ERL,REPORT$)
+
+quit%=FALSE:preQuit%=FALSE
+REPEAT
+  IF moveStatus%=STATUS_IDLE THEN
+    SYS "Wimp_Poll",1,pollBlock% TO event%
+  ELSE
+    SYS "Wimp_Poll",0,pollBlock% TO event%
+  ENDIF
+  CASE event% OF
+    WHEN 0
+      IF moveStatus%=STATUS_MOVING AND FNmonotonicTime-slideTime%>2 THEN PROCcontinueMove
+    WHEN 1:PROCevent_redraw(pollBlock%)
+    WHEN 2:SYS "Wimp_OpenWindow",,pollBlock%
+    WHEN 3:SYS "Wimp_CloseWindow",,pollBlock%
+    WHEN 6:PROCevent_click(pollBlock%)
+    WHEN 8:PROCevent_key(pollBlock%)
+    WHEN 9:PROCevent_menuselect(pollBlock%)
+    WHEN 17,18,19:PROCevent_message(pollBlock%)
+  ENDCASE
+UNTIL quit%
+
+SYS "Wimp_CloseDown"
+*Unset 12MinsTo9$Running
+END
+
+REM -------------------------------------------------------------
+REM Event handling routines
+REM -------------------------------------------------------------
+DEF PROCevent_message(b%)
+LOCAL sender%
+CASE b%!16 OF
+  WHEN 0:quit%=TRUE
+  WHEN 8:REM PreQuit - bit 0 of b%!20 clear indicates Shutdown
+
+    IF preQuit%=FALSE AND gameStatus%<>GAME_GAMEOVER AND gameStatus%<>GAME_NONE THEN
+      REM ack the message to stop the quit
+      sender%=b%!4:b%!12=b%!8
+      SYS "Wimp_SendMessage",19,b%,sender%
+      PROCcheckQuit((b%!20 AND 1)=0)
+    ENDIF
+  WHEN 10:REM Message_DesktopSave
+    BPUT#(b%!20),"/"+appDir$
+  WHEN 9,&400C1,&400CF:REM PaletteChange/ModeChange/FontChanged
+    PROCrecreateSprite(b%!16=&400C1)
+  WHEN &400C9:REM Message_MenusDeleted
+    IF b%!20 = win_gameEnd% THEN PROChandleGameEndClose
+    IF b%!20 = win_check% THEN PROChandleCheckWinClose(FALSE)
+ENDCASE
+
+ENDPROC
+
+DEF PROCevent_key(b%)
+LOCAL handled%,key%
+handled%=FALSE:key%=b%!24
+CASE b%!0 OF
+  WHEN win_check%
+    IF key%=&00D THEN
+      PROCcloseWindow(win_check%)
+      PROChandleCheckWinClose(TRUE)
+      handled%=TRUE
+    ENDIF
+
+    IF key%=&01B THEN
+      PROCcloseWindow(win_check%)
+      PROChandleCheckWinClose(FALSE)
+      handled%=TRUE
+    ENDIF
+
+  WHEN win_gameEnd%
+    IF key%=&00D OR key%=&01B THEN
+      PROCcloseWindow(win_gameEnd%)
+      PROChandleGameEndClose
+      handled%=TRUE
+    ENDIF
+
+  WHEN win_2048%
+    CASE key% OF
+      WHEN &18C,&18D,&18E,&18F
+        IF moveStatus%=STATUS_IDLE THEN PROCstartMove(key%-&18B)
+        handled%=TRUE
+    ENDCASE
+ENDCASE
+
+IF handled%=FALSE THEN SYS "Wimp_ProcessKey",b%!24
+ENDPROC
+
+DEF PROCevent_menuselect(b%)
+LOCAL button%
+SYS "Wimp_GetPointerInfo",,miscBlock%
+button%=miscBlock%!8
+CASE curMenu% OF
+  WHEN menu_iconBar%
+    CASE b%!0 OF
+      WHEN 1:OSCLI"Filer_Run "+appDir$+".!Help"
+      WHEN 2:PROCcheckNewGame
+      WHEN 3
+        IF gameStatus%=GAME_GAMEOVER OR gameStatus%=GAME_NONE THEN
+          quit%=TRUE
+        ELSE
+          PROCcheckQuit(FALSE)
+        ENDIF
+    ENDCASE
+ENDCASE
+IF button% AND 1 THEN
+  SYS "Wimp_CreateMenu",,curMenu%
+ENDIF
+ENDPROC
+
+DEF PROCevent_click(b%)
+CASE b%!12 OF
+ WHEN win_check%
+  IF (b%!8=1 OR b%!8=4) THEN
+   IF b%!16=0 THEN
+    PROCcloseWindow(win_check%)
+    PROChandleCheckWinClose(TRUE)
+   ENDIF
+   IF b%!16=2 THEN
+    PROCcloseWindow(win_check%)
+    PROChandleCheckWinClose(FALSE)
+   ENDIF
+  ENDIF
+
+ WHEN win_gameEnd%
+  IF b%!16=0 AND (b%!8=1 OR b%!8=4) THEN
+    PROCcloseWindow(win_gameEnd%)
+    PROChandleGameEndClose
+  ENDIF
+
+ WHEN win_progInfo%
+  IF b%!16=10 THEN PROClaunchURI("https://riscos.roberthampton.me.uk/")
+ WHEN win_2048%
+  SYS"Wimp_SetCaretPosition",win_2048%,-1,0,0,-1,-1
+  CASE b%!16 OF
+   WHEN 4
+     IF moveStatus%=STATUS_IDLE THEN PROCundoMove
+   WHEN 6,7,8,9
+     IF moveStatus%=STATUS_IDLE THEN PROCstartMove((b%!16)-5)
+  ENDCASE
+
+ WHEN -2:REM iconbar
+  IF b%!16=icon_iconBar% THEN
+    IF b%!8=2 THEN PROCopenMenu(menu_iconBar%,(b%!0)-44,96+44*4)
+    IF b%!8=1 OR b%!8=4 THEN
+      PROCshowBoard
+  ENDIF
+ENDCASE
+ENDPROC
+
+DEF PROCevent_redraw(b%)
+LOCAL more%
+IF b%!0 = win_2048% THEN
+  SYS "Wimp_RedrawWindow",,b% TO more%
+  IF more%<>0 THEN PROCredrawGameWindow(b%)
+ENDIF
+
+ENDPROC
+
+DEF PROCredrawGameWindow(b%)
+LOCAL more%,bx%,by%
+bx%=b%!4-b%!20:by%=b%!16-b%!24
+REPEAT
+  SYS "OS_SpriteOp",34+256,sprArea%,"2048",bx%+boardIconX%,by%+boardIconY%
+  SYS "Wimp_GetRectangle",,b% TO more%
+UNTIL more%=0
+ENDPROC
+
+DEF PROCupdateBoard
+miscBlock%!0=win_2048%
+miscBlock%!4=boardIconX%
+miscBlock%!8=boardIconY%
+miscBlock%!12=boardIconX2%
+miscBlock%!16=boardIconY2%
+SYS "Wimp_UpdateWindow",,miscBlock% TO more%
+IF more%<>0 THEN PROCredrawGameWindow(miscBlock%)
+ENDPROC
+
+DEF PROCshowBoard
+IF gameStatus%=GAME_NONE THEN
+  PROCstartNewGame
+ELSE
+  PROCopenWindow(win_2048%)
+ENDIF
+SYS"Wimp_SetCaretPosition",win_2048%,-1,0,0,-1,-1
+ENDPROC
+
+DEF PROCcheckNewGame
+IF gameStatus%=GAME_GAMEOVER OR gameStatus%=GAME_NONE THEN
+  PROCstartNewGame
+ELSE
+  curPrompt%=PROMPT_NEWGAME
+  PROCsetIconText(win_check%,1,"There is a game already in progress. Do you really want to start a new game?")
+  PROCsetIconText(win_check%,0,"New game")
+  PROCpopUpWindow(win_check%)
+ENDIF
+
+ENDPROC
+
+DEF PROCcheckQuit(shutdown%)
+IF gameStatus%<>GAME_GAMEOVER AND gameStatus%<>GAME_NONE THEN
+  IF shutdown% THEN curPrompt%=PROMPT_SHUTDOWN ELSE curPrompt%=PROMPT_QUIT
+  PROCsetIconText(win_check%,1,"There is a game in progress. Do you really want to quit?")
+  PROCsetIconText(win_check%,0,"Quit")
+  PROCpopUpWindow(win_check%)
+ENDIF
+ENDPROC
+
+DEF PROCstartNewGame
+gameStatus% = GAME_INPROGRESS
+moveStatus% = STATUS_IDLE
+score%=0:grid%()=0:undoGrid%()=0
+canUndo%=FALSE
+PROCupdateScore
+PROCadd:PROCadd:REM populate first two tiles
+PROCredrawBoardSprite
+IF firstOpen% THEN
+  PROCcentreWindow(win_2048%)
+  firstOpen%=FALSE
+ELSE
+  PROCopenWindow(win_2048%)
+ENDIF
+PROCredrawWindow(win_2048%)
+ENDPROC
+
+REM add a new random number to the grid
+DEF PROCadd
+LOCAL x%,y%,num%,t%
+IF FNgridFull THEN ENDPROC
+REPEAT
+  x%=RND(BOARD_SIZE)-1:y%=RND(BOARD_SIZE)-1
+UNTIL grid%(x%,y%)=0
+IF RND(10)=1 THEN grid%(x%,y%)=2 ELSE grid%(x%,y%)=1
+ENDPROC
+
+
+DEF PROCopenMenu(m%,x%,y%)
+curMenu%=m%
+SYS "Wimp_CreateMenu",,m%,x%,y%
+ENDPROC
+
+DEF PROCopenWindow(w%)
+miscBlock%!0=w%
+SYS "Wimp_GetWindowState",,miscBlock%
+miscBlock%!28=-1
+SYS "Wimp_OpenWindow",,miscBlock%
+ENDPROC
+
+DEF PROCredrawWindow(w%)
+LOCAL x1%,x2%,y1%,y2%
+miscBlock%!0=w%
+SYS "Wimp_GetWindowState",,miscBlock%
+x1%=(miscBlock%!20):y2%=(miscBlock%!24)
+x2%=x1%+(miscBlock%!12)-(miscBlock%!4)
+y1%=y2%+(miscBlock%!8)-(miscBlock%!16)
+SYS "Wimp_ForceRedraw",w%,x1%,y1%,x2%,y2%
+ENDPROC
+
+DEF PROCcentreWindow(w%)
+LOCAL xSize%,ySize%,screenX%,screenY%,xEig%,yEig%
+miscBlock%!0=w%
+SYS "Wimp_GetWindowState",,miscBlock%
+xSize%=miscBlock%!12-miscBlock%!4
+ySize%=miscBlock%!16-miscBlock%!8
+SYS "OS_ReadModeVariable",-1,4 TO ,,xEig%
+SYS "OS_ReadModeVariable",-1,5 TO ,,yEig%
+SYS "OS_ReadModeVariable",-1,11 TO ,,screenX%
+SYS "OS_ReadModeVariable",-1,12 TO ,,screenY%
+screenX%=screenX%<<xEig%
+screenY%=screenY%<<yEig%
+miscBlock%!4=(screenX%-xSize%) DIV 2
+miscBlock%!8=(screenY%-ySize%) DIV 2
+miscBlock%!12=miscBlock%!4+xSize%
+miscBlock%!16=miscBlock%!8+ySize%
+miscBlock%!28=-1
+SYS "Wimp_OpenWindow",,miscBlock%
+ENDPROC
+
+DEF PROCpopUpWindow(w%)
+LOCAL xSize%,ySize%,screenX%,screenY%,xEig%,yEig%
+miscBlock%!0=w%
+SYS "Wimp_GetWindowState",,miscBlock%
+xSize%=miscBlock%!12-miscBlock%!4
+ySize%=miscBlock%!16-miscBlock%!8
+SYS "OS_ReadModeVariable",-1,4 TO ,,xEig%
+SYS "OS_ReadModeVariable",-1,5 TO ,,yEig%
+SYS "OS_ReadModeVariable",-1,11 TO ,,screenX%
+SYS "OS_ReadModeVariable",-1,12 TO ,,screenY%
+screenX%=screenX%<<xEig%
+screenY%=screenY%<<yEig%
+SYS "Wimp_CreateMenu",,w%,(screenX%-xSize%) DIV 2,((screenY%-ySize%) DIV 2)+ySize%
+SYS"Wimp_SetCaretPosition",w%,-1,0,0,-1,-1
+ENDPROC
+
+DEF PROCcloseWindow(w%)
+miscBlock%!0=w%
+SYS "Wimp_CloseWindow",,miscBlock%
+ENDPROC
+
+
+DEF PROCsetIconText(w%,i%,t$)
+LOCAL iData%,iLen%
+miscBlock%!0=w%:miscBlock%!4=i%
+SYS "Wimp_GetIconState",,miscBlock%
+IF (miscBlock%!24) AND 256 THEN
+  iData%=miscBlock%!28
+  iLen%=miscBlock%!36
+  IF LEN(t$)>iLen%-1 THEN t$=LEFT$(t$,iLen%-1)
+  $(iData%)=t$
+ELSE
+  ERROR 1,"Icon isn't indirected"
+ENDIF
+REM force a redraw of an icon
+miscBlock%!8=0:miscBlock%!12=0
+SYS "Wimp_SetIconState",,miscBlock%
+ENDPROC
+
+
+
+REM -------------------------------------------------------------
+REM Heap memory management routines
+REM -------------------------------------------------------------
+DEF PROCheap_init
+LOCAL oldSlotSize%,newSlotSize%
+
+__heapSize%=FNheap_readPageSize
+
+REM read wimpslot
+SYS "Wimp_SlotSize",-1,-1 TO oldSlotSize%
+
+REM extend wimpslot by one page
+SYS "Wimp_SlotSize",oldSlotSize%+__heapSize%,-1 TO newSlotSize%
+
+IF newSlotSize%=oldSlotSize%+__heapSize% THEN
+  __heapPtr%=HIMEM
+  SYS "OS_Heap",0,__heapPtr%,,__heapSize%
+ELSE
+  ERROR 0,"Failed to allocate memory for heap"
+ENDIF
+ENDPROC
+
+REM calls OS_Heap 2 to allocate a block
+REM returns a pointer, or 0 if failed
+DEF FNheap_malloc(size%)
+LOCAL newPtr%,flags%,success%
+newPtr%=0
+
+IF size%<>0 THEN
+  SYS "XOS_Heap",2,__heapPtr%,,size% TO ,,newPtr%;flags%
+
+  REM if we get an error, not enough memory in heap
+  IF (flags% AND 1) THEN
+    success%=FNheap_extend(size%)
+    IF success% THEN
+      SYS "OS_Heap",2,__heapPtr%,,size% TO ,,newPtr%;flags%
+    ENDIF
+  ENDIF
+ENDIF
+=newPtr%
+
+REM gets size of block
+REM note that OSHeap 6 returns the size of a block
+REM including its header. Unfortunately there is no
+REM way to confirm the size of a header and it is
+REM not guaranteed to remain the same in newer RISC
+REM OS versions.
+DEF FNheap_sizeof(block%)
+LOCAL size%
+SYS "OS_Heap",6,__heapPtr%,block% TO ,,,size%
+=size%
+
+REM calls OS_Heap_4 to resize block
+REM returns 0 if failure. The block may be moved and ptr% updated
+DEF FNheap_realloc(RETURN block%,change%)
+LOCAL oldsize%,success%,pageSize%,flags%
+IF change%=0 THEN =TRUE
+
+pageSize%=FNheap_readPageSize
+success%=TRUE
+
+SYS "XOS_Heap",4,__heapPtr%,block%,change% TO ,,block%;flags%
+IF (flags% AND 1) THEN
+  REPEAT
+    success%=FNheap_extend(pageSize%)
+    IF success% THEN
+      SYS "XOS_Heap",4,__heapPtr%,block%,change% TO ,,block%;flags%
+    ENDIF
+  UNTIL (flags% AND 1)=0 OR success%=FALSE
+ENDIF
+
+IF change%<0 THEN PROCheap_shrink
+=success%
+
+REM frees a block and shrinks heap
+DEF PROCheap_free(block%)
+  SYS "OS_Heap",3,__heapPtr%,block%
+  PROCheap_shrink
+ENDPROC
+
+DEF FNheap_extend(extSize%)
+LOCAL success%,oldSlotSize%,newSlotSize%,actualChange%,flags%
+success%=FALSE
+
+REM read wimpslot
+SYS "Wimp_SlotSize",-1,-1 TO oldSlotSize%
+
+REM extend wimpslot
+SYS "Wimp_SlotSize",oldSlotSize%+extSize%,-1 TO newSlotSize%
+
+IF newSlotSize%<oldSlotSize%+extSize% THEN
+  REM we couldn't extend, so revert to old memory slot and
+  REM return unsuccessful
+  SYS "Wimp_SlotSize",oldSlotSize%,-1
+ELSE
+  SYS "OS_Heap",5,__heapPtr%,,extSize% TO ,,,actualChange%;flags%
+  success%=((flags% AND 1)=0)
+  __heapSize%+=extSize%
+ENDIF
+=success%
+
+REM shrinks the heap as much as possible
+DEF PROCheap_shrink
+LOCAL oldSlotSize%,newSlotSize%,pageSize%
+LOCAL shrinkTry%,shrinkActual%,flags%
+pageSize%=FNheap_readPageSize
+shrinkTry%=__heapSize%-pageSize%
+SYS "Wimp_SlotSize",-1,-1 TO oldSlotSize%
+
+newSlotSize%=oldSlotSize%
+
+REPEAT
+  SYS "XOS_Heap",5,__heapPtr%,,-pageSize% TO ,,,shrinkActual%;flags%
+  IF (flags% AND 1) THEN
+    SYS "OS_Heap",5,__heapPtr%,,shrinkActual%
+  ELSE
+    newSlotSize%+=shrinkActual%
+    __heapSize%+=shrinkActual%
+  ENDIF
+UNTIL (flags% AND 1)=1
+SYS "Wimp_SlotSize",newSlotSize%,-1
+ENDPROC
+
+REM calls OS_Heap 1
+DEF FNheap_describeLargestFree
+LOCAL largestFree%
+SYS "OS_Heap",1,__heapPtr% TO ,,largestFree%
+=largestFree%
+
+DEF FNheap_describeTotalFree
+LOCAL totalFree%
+SYS "OS_Heap",1,__heapPtr% TO ,,,totalFree%
+=totalFree%
+
+DEF FNheap_describeSize
+=__heapSize%
+
+REM calls OS_ReadMemMapInfo to get Page size
+DEF FNheap_readPageSize
+LOCAL pageSize%
+SYS "OS_ReadMemMapInfo" TO pageSize%
+=pageSize%
+
+REM -------------------------------------------------------------
+REM sprite handling routines
+REM -------------------------------------------------------------
+DEF PROCcreateSpriteArea
+LOCAL sprSize%
+pageSize%=FNheap_readPageSize
+sprSize%=pageSize%
+sprArea%=FNheap_malloc(sprSize%)
+IF sprArea%=0 THEN ERROR 0,"Unable to allocate memory for sprite"
+
+sprArea%!0=sprSize%
+sprArea%!8=16
+SYS "OS_SpriteOp",9+256,sprArea%
+
+ENDPROC
+
+DEF PROCcreateBoardSprite
+LOCAL s%,f%,xSize%,ySize%,sprSize%
+SYS "OS_ReadModeVariable",-1,4 TO ,,xEig%
+SYS "OS_ReadModeVariable",-1,5 TO ,,yEig%
+sprSize%=sprArea%!0
+xSize%=SPR_SIZE>>xEig%
+ySize%=SPR_SIZE>>yEig%
+REPEAT
+  SYS "XOS_SpriteOp",15+256,sprArea%,"2048",0,xSize%,ySize%,MODE TO ;f%
+
+  IF (f% AND 1) THEN
+    s%=FNheap_realloc(sprArea%,pageSize%)
+    IF s%=0 THEN ERROR 0,"Out of memory"
+    sprSize%=sprSize%+pageSize%
+    sprArea%!0=sprSize%
+
+  ENDIF
+UNTIL (f% AND 1)=0
+PROCredrawBoardSprite
+ENDPROC
+
+DEF PROCredirectToSprite
+SYS "OS_SpriteOp",60+256,sprArea%,"2048",1
+outputToSprite%=TRUE
+ENDPROC
+
+DEF PROCredirectToScreen
+SYS "OS_SpriteOp",60+256,sprArea%,0,1
+outputToSprite%=FALSE
+ENDPROC
+
+DEF PROCrecreateSprite(isModeChange%)
+REM first, if we are moving, complete the move
+REM STATUS_PANIC indicates to PROCcontinueMove that
+REM we finish the move, skipping redraws
+IF moveStatus%=STATUS_MOVING THEN
+  moveStatus%=STATUS_PANIC
+  REPEAT
+    PROCcontinueMove
+  UNTIL moveStatus%=STATUS_IDLE
+ENDIF
+REM if the mode has changed, we have to delete and
+REM recreate the sprite
+IF isModeChange%
+  SYS "OS_SpriteOp",25+256,sprArea%,"2048"
+  PROCcreateBoardSprite
+ENDIF
+PROCshrinkSpriteArea
+PROCredrawBoardSprite
+PROCredrawWindow(win_2048%)
+ENDPROC
+
+REM shrinks the sprite area if possible
+DEF PROCshrinkSpriteArea
+LOCAL firstFree%,s%,sprSize%
+sprSize%=sprArea%!0
+SYS "OS_SpriteOp",8+256,sprArea% TO ,,,,,firstFree%
+IF firstFree%<sprSize% THEN
+  REPEAT
+    s%=FNheap_realloc(sprArea%,-pageSize%)
+    IF s%<>0 THEN
+      sprSize%-=pageSize%
+      sprArea%!0=sprSize%
+    ENDIF
+  UNTIL s%=0 OR sprSize%<=firstFree%+pageSize%
+ENDIF
+
+ENDPROC
+
+REM -------------------------------------------------------------
+REM draws the board and individual squares within that board
+REM -------------------------------------------------------------
+DEF PROCredrawBoardSprite
+LOCAL x%,y%
+PROCredirectToSprite
+SYS "ColourTrans_SetGCOL",&9C9C9C00,,,%110000000
+CLG
+FOR x%=0 TO BOARD_SIZE-1
+  FOR y%=0 TO BOARD_SIZE-1
+    IF grid%(x%,y%)>0 THEN
+      PROCdrawsquare(x%,y%)
+    ENDIF
+  NEXT y%
+NEXT x%
+PROCredirectToScreen
+ENDPROC
+
+DEF PROCdrawsquare(x%,y%)
+LOCAL value%,v$,rx%,ry%,textWidth%
+value%=grid%(x%,y%)
+IF value%=0 THEN ENDPROC
+rx%=BOARD_LEFT+x%*(SQUARE_SIZE+8):ry%=BOARD_TOP-y%*(SQUARE_SIZE+8)
+SYS "ColourTrans_SetGCOL",tileColour%(value%,0),,,1<<256
+RECTANGLE FILL rx%,ry%,SQUARE_SIZE
+SYS "ColourTrans_SetGCOL",&0,,,1<<256
+RECTANGLE rx%,ry%,SQUARE_SIZE
+v$=STR$(2^value%)
+IF wimpVersion%<350 THEN
+  SYS "ColourTrans_SetGCOL",tileColour%(value%,1),,,1<<256
+  textWidth%=LEN(v$)*16
+  VDU 5
+  VDU 23,17,7,%110,16>>xEig%;32>>yEig%;0,0
+  MOVE rx%+(SQUARE_SIZE/2)-textWidth%/2,ry%+(SQUARE_SIZE/2)+16:PRINT v$
+ELSE
+  SYS "Wimp_TextOp",0,tileColour%(value%,1),tileColour%(value%,0)
+  SYS "Wimp_TextOp",1,v$,0 TO textWidth%
+  SYS "Wimp_TextOp",2,v$,-1,-1,rx%+(SQUARE_SIZE/2)-textWidth%/2,ry%+(SQUARE_SIZE/2)-16
+ENDIF
+ENDPROC
+
+REM -------------------------------------------------------------
+REM game logic
+REM -------------------------------------------------------------
+DEF FNgridFull
+LOCAL full%,x%,y%
+full%=TRUE
+FOR x%=0 TO BOARD_SIZE-1
+  FOR y%=0 TO BOARD_SIZE-1
+    IF grid%(x%,y%)=0 THEN full%=FALSE
+  NEXT y%
+NEXT x%
+=full%
+
+DEF PROCundoMove
+IF canUndo%=FALSE THEN VDU 7:ENDPROC
+grid%()=undoGrid%()
+gameStatus%=oldGameStatus%
+score%=oldScore%
+bestScore%=oldBest%
+PROCredrawBoardSprite
+PROCupdateBoard
+PROCupdateScore
+canUndo%=FALSE
+ENDPROC
+
+DEF PROCstartMove(d%)
+CASE d% OF
+  WHEN 1:REM left
+    slide_direction%=SLIDE_HORIZONTAL
+    slide_start%=1
+    slide_end%=BOARD_SIZE-1
+    slide_step%=1
+  WHEN 2:REM right
+    slide_direction%=SLIDE_HORIZONTAL
+    slide_start%=BOARD_SIZE-2
+    slide_end%=0
+    slide_step%=-1
+  WHEN 3:REM down
+    slide_direction%=SLIDE_VERTICAL
+    slide_start%=BOARD_SIZE-2
+    slide_end%=0
+    slide_step%=-1
+  WHEN 4:REM up
+    slide_direction%=SLIDE_VERTICAL
+    slide_start%=1
+    slide_end%=BOARD_SIZE-1
+    slide_step%=1
+ENDCASE
+moveStatus%=STATUS_MOVING
+slide_noMoreMoves%=FALSE
+slide_moveSuccess%=FALSE
+slide_offset%=0
+slideTime%=FNmonotonicTime
+moved%()=0:merged%()=0:undone%=FALSE
+ENDPROC
+
+DEF PROCcontinueMove
+slideTime%=FNmonotonicTime
+IF slide_direction%=SLIDE_HORIZONTAL THEN PROCslideHorizontal ELSE PROCslideVertical
+ENDPROC
+
+DEF PROCslideVertical
+LOCAL x%,y%
+IF slide_offset%=0 THEN
+  slide_noMoreMoves%=TRUE:moved%()=0
+  IF undone%=FALSE THEN PROCmakeUndo
+  REM calculate slides
+  FOR y%=slide_start% TO slide_end% STEP slide_step%
+    FOR x%=0 TO BOARD_SIZE-1
+      IF grid%(x%,y%)<>0 THEN
+        IF grid%(x%,y%-slide_step%)=0 THEN
+          REM move tile
+          moved%(x%,y%)=TRUE
+          grid%(x%,y%-slide_step%)=grid%(x%,y%)
+          grid%(x%,y%)=0
+          slide_noMoreMoves%=FALSE
+          slide_moveSuccess%=TRUE
+        ELSE
+          IF grid%(x%,y%-slide_step%)=grid%(x%,y%) AND merged%(x%,y%)=FALSE THEN
+            REM merge tiles
+            grid%(x%,y%-slide_step%)=grid%(x%,y%-slide_step%)+1
+            grid%(x%,y%)=0
+            merged%(x%,y%)=TRUE
+            merged%(x%,y%-slide_step%)=TRUE
+            moved%(x%,y%)=TRUE
+            score%+=2^grid%(x%,y%-slide_step%)
+            IF grid%(x%,y%-slide_step%)=11
+            slide_noMoreMoves%=FALSE
+            slide_moveSuccess%=TRUE
+          ENDIF
+        ENDIF
+      ENDIF
+    NEXT x%
+  NEXT y%
+ENDIF
+
+IF slide_noMoreMoves%=FALSE THEN
+  IF moveStatus%<>STATUS_PANIC THEN PROCredirectToSprite
+  SYS "ColourTrans_SetGCOL",&9C9C9C00,,,%110000000
+  FOR x%=0 TO BOARD_SIZE-1
+    FOR y%=slide_start% TO slide_end% STEP slide_step%
+      IF moved%(x%,y%) AND moveStatus%<>STATUS_PANIC THEN
+        sx%=BOARD_LEFT+x%*(SQUARE_SIZE+8)
+        sy%=BOARD_TOP-y%*(SQUARE_SIZE+8)+(slide_offset%*slide_step%)
+        RECTANGLE FILL sx%,sy%,SQUARE_SIZE TO sx%,sy%+(16*slide_step%)
+      ENDIF
+      IF slide_offset%+16>=SQUARE_SIZE AND moveStatus%<>STATUS_PANIC AND merged%(x%,y%-slide_step%) THEN
+        PROCdrawsquare(x%,y%-slide_step%)
+      ENDIF
+
+    NEXT y%
+  NEXT x%
+  slide_offset%+=16
+  IF moveStatus%<>STATUS_PANIC THEN
+    PROCredirectToScreen
+    PROCupdateBoard
+  ENDIF
+  IF slide_offset%>SQUARE_SIZE THEN
+    slide_offset%=0
+    PROCupdateScore
+  ENDIF
+ELSE
+  PROCendMove
+ENDIF
+
+ENDPROC
+
+DEF PROCslideHorizontal
+LOCAL x%,y%,sx%,sy%
+IF slide_offset%=0 THEN
+  slide_noMoreMoves%=TRUE:moved%()=0
+  IF undone%=FALSE THEN PROCmakeUndo
+  REM calculate slides
+  FOR x%=slide_start% TO slide_end% STEP slide_step%
+    FOR y%=0 TO BOARD_SIZE-1
+      IF grid%(x%,y%)<>0 THEN
+        IF grid%(x%-slide_step%,y%)=0 THEN
+          REM move tile
+          moved%(x%,y%)=TRUE
+          grid%(x%-slide_step%,y%)=grid%(x%,y%)
+          grid%(x%,y%)=0
+          slide_noMoreMoves%=FALSE
+          slide_moveSuccess%=TRUE
+        ELSE
+          IF grid%(x%-slide_step%,y%)=grid%(x%,y%) AND merged%(x%,y%)=FALSE THEN
+            REM merge tiles
+            grid%(x%-slide_step%,y%)=grid%(x%-slide_step%,y%)+1
+            grid%(x%,y%)=0
+            merged%(x%,y%)=TRUE
+            merged%(x%-slide_step%,y%)=TRUE
+            moved%(x%,y%)=TRUE
+            score%+=2^grid%(x%-slide_step%,y%)
+            IF grid%(x%-slide_step%,y%)=11
+            slide_noMoreMoves%=FALSE
+            slide_moveSuccess%=TRUE
+          ENDIF
+        ENDIF
+      ENDIF
+    NEXT y%
+  NEXT x%
+ENDIF
+
+IF slide_noMoreMoves%=FALSE THEN
+  IF moveStatus%<>STATUS_PANIC THEN PROCredirectToSprite
+  SYS "ColourTrans_SetGCOL",&9C9C9C00,,,%110000000
+  FOR x%=slide_start% TO slide_end% STEP slide_step%
+    FOR y%=0 TO BOARD_SIZE-1
+      IF moved%(x%,y%) AND moveStatus%<>STATUS_PANIC THEN
+        sx%=BOARD_LEFT+x%*(SQUARE_SIZE+8)-(slide_offset%*slide_step%)
+        sy%=BOARD_TOP-y%*(SQUARE_SIZE+8)
+
+        RECTANGLE FILL sx%,sy%,SQUARE_SIZE TO sx%-(16*slide_step%),sy%
+      ENDIF
+      IF slide_offset%+16>=SQUARE_SIZE AND moveStatus%<>STATUS_PANIC AND  merged%(x%-slide_step%,y%) THEN
+
+         PROCdrawsquare(x%-slide_step%,y%)
+      ENDIF
+
+    NEXT y%
+  NEXT x%
+  slide_offset%+=16
+  IF moveStatus%<>STATUS_PANIC THEN
+    PROCredirectToScreen
+    PROCupdateBoard
+  ENDIF
+  IF slide_offset%>=SQUARE_SIZE THEN
+    slide_offset%=0
+    PROCupdateScore
+  ENDIF
+ELSE
+  PROCendMove
+ENDIF
+
+ENDPROC
+
+DEF PROCendMove
+moveStatus%=STATUS_IDLE
+IF slide_moveSuccess%=TRUE THEN
+  canUndo%=TRUE
+  IF gameStatus%<>GAME_AFTERWIN THEN
+    PROCcheckWin
+  ENDIF
+  PROCadd
+  PROCredrawBoardSprite
+  PROCupdateBoard
+  REM this is to cover a situaion where the 2048 tile is
+  REM reached, but the board is full. Otherwise the Game
+  REM Over screen would override the Win screen.
+  IF gameStatus%<>GAME_WON THEN PROCcheckGameOver
+ENDIF
+ENDPROC
+
+DEF PROCmakeUndo
+undoGrid%()=grid%()
+oldGameStatus%=gameStatus%
+oldScore%=score%
+oldBest%=bestScore%
+undone%=TRUE
+ENDPROC
+
+DEF PROCcheckWin
+LOCAL x%,y%,won%
+won%=FALSE
+FOR x%=0 TO BOARD_SIZE-1
+  FOR y%=0 TO BOARD_SIZE-1
+    IF grid%(x%,y%)=11 THEN won%=TRUE
+  NEXT y%
+NEXT x%
+IF won% THEN
+  gameStatus%=GAME_WON
+  PROCpopUpGameWonWindow
+ENDIF
+ENDPROC
+
+DEF PROCcheckGameOver
+LOCAL gameOver%,x%,y%
+REM if there are empty cells then game is not over
+IF NOT FNgridFull THEN
+  gameOver%=FALSE
+ELSE
+  REM check if there are tiles next to each other that could make valid moves
+  gameOver%=TRUE
+  FOR x%=0 TO BOARD_SIZE-1
+    FOR y%=0 TO BOARD_SIZE-1
+      REM check tile below
+      IF y%<BOARD_SIZE-1 THEN IF grid%(x%,y%)=grid%(x%,y%+1) THEN gameOver%=FALSE
+      REM check tile above
+      IF y%>0 THEN IF grid%(x%,y%-1)=grid%(x%,y%) THEN gameOver%=FALSE
+      REM check tile to the left
+      IF x%>0 THEN IF grid%(x%-1,y%)=grid%(x%,y%) THEN gameOver%=FALSE
+      REM check tile to the right
+      IF x%<BOARD_SIZE-1 THEN IF grid%(x%,y%)=grid%(x%+1,y%) THEN gameOver%=FALSE
+    NEXT y%
+  NEXT x%
+ENDIF
+IF gameOver% THEN
+  gameStatus%=GAME_GAMEOVER
+  PROCpopUpGameOverWindow
+ENDIF
+ENDPROC
+
+DEF PROCpopUpGameOverWindow
+curPrompt%=PROMPT_GAMEOVER
+PROCsetIconText(win_gameEnd%,1,"Game over!")
+PROCpopUpWindow(win_gameEnd%)
+ENDPROC
+
+DEF PROCpopUpGameWonWindow
+curPrompt%=PROMPT_WIN
+PROCsetIconText(win_gameEnd%,1,"Congratulations, you reached 2048! Continue playing and see how much further you can go!")
+PROCpopUpWindow(win_gameEnd%)
+ENDPROC
+
+DEF PROChandleGameEndClose
+SYS"XWimp_SetCaretPosition",win_2048%,-1,0,0,-1,-1
+IF gameStatus%=GAME_WON THEN
+  gameStatus%=GAME_AFTERWIN
+  PROCcheckGameOver
+ENDIF
+ENDPROC
+
+DEF PROChandleCheckWinClose(OKclicked%)
+SYS"XWimp_SetCaretPosition",win_2048%,-1,0,0,-1,-1
+IF OKclicked% THEN
+  CASE curPrompt% OF
+    WHEN PROMPT_NEWGAME:
+      PROCstartNewGame
+    WHEN PROMPT_QUIT:
+      quit%=TRUE
+    WHEN PROMPT_SHUTDOWN:
+      preQuit%=TRUE
+      SYS "Wimp_ProcessKey",&1FC
+  ENDCASE
+ENDIF
+curPrompt%=0
+ENDPROC
+
+
+DEF PROCupdateScore
+IF score%>9999999 THEN score%=9999999
+IF score%>bestScore% THEN bestScore%=score%
+PROCsetIconText(win_2048%,0,STR$score%)
+PROCsetIconText(win_2048%,2,STR$bestScore%)
+ENDPROC
+
+REM -------------------------------------------------------------
+REM initialisation
+REM -------------------------------------------------------------
+DEF PROCinitWimp
+appName$="12 Mins To 9":appDir$=FNsystemVar("12MinsTo9$Dir")
+
+msgBlock%!0 = 8
+msgBlock%!4 = 9
+msgBlock%!8 = 10
+msgBlock%!12 = &400C1
+msgBlock%!16 = &400C9
+msgBlock%!20 = &400CF
+msgBlock%!24 = 0
+SYS "Wimp_Initialise",310,&4B534154,appName$,msgBlock% TO wimpVersion%,taskHandle%
+*Set 12MinsTo9$Running Yes
+
+SYS "Wimp_OpenTemplate",,appDir$+".Templates"
+win_progInfo%=FNloadTemplate("progInfo")
+win_2048%=FNloadTemplate("2048")
+
+miscBlock%!0=win_2048%:miscBlock%!4=5
+SYS "Wimp_GetIconState",,miscBlock%
+
+boardIconX%=miscBlock%!8:boardIconY%=miscBlock%!12
+boardIconX2%=miscBlock%!16:boardIconY2%=miscBlock%!20
+
+win_gameEnd%=FNloadTemplate("GameEnd")
+win_check%=FNloadTemplate("Check")
+PROCsetIconText(win_progInfo%,6,"0.95 (02-May-2023)")
+
+icon_iconBar%=FNiconBarIcon("!12MinsTo9")
+
+menu_iconBar%=FNstartMenu(appName$,4)
+PROCaddMenuItem(menu_iconBar%,0,256,win_progInfo%,"Info")
+PROCaddMenuItem(menu_iconBar%,1,0,-1,"Help")
+PROCaddMenuItem(menu_iconBar%,2,0,-1,"New game")
+PROCaddMenuItem(menu_iconBar%,3,128,-1,"Quit")
+
+PROCcreateSpriteArea
+
+firstOpen%=TRUE
+ENDPROC
+
+DEF FNloadTemplate(name$)
+LOCAL tempSize%,tempBuf%,indSize%,indBuf%,found%,window%
+SYS "Wimp_LoadTemplate",,0,0,0,-1,name$,0 TO ,tempSize%,indSize%,,,,found%
+IF found%=0 THEN ERROR 0,"Template '"+name$+"' not found"
+DIM tempBuf% tempSize%-1
+DIM indBuf% indSize%-1
+SYS "Wimp_LoadTemplate",,tempBuf%,indBuf%,indBuf%+indSize%,-1,name$,0
+SYS "Wimp_CreateWindow",,tempBuf% TO window%
+=window%
+
+
+DEF FNiconBarIcon(sprite$)
+LOCAL handle%
+miscBlock%!0=-1
+miscBlock%!4=0
+miscBlock%!8=0
+miscBlock%!12=68
+miscBlock%!16=68
+miscBlock%!20=(3<<12)+2
+$(miscBlock%+24)=sprite$
+SYS "Wimp_CreateIcon",0,miscBlock% TO handle%
+=handle%
+
+DEF FNstartMenu(title$,itemCount%)
+LOCAL menuBuffer%,indBuffer%
+DIM menuBuffer% 28+(24*itemCount%)
+DIM indBuffer% LEN(title$)+1
+menuBuffer%!0=indBuffer%
+menuBuffer%!4=0
+menuBuffer%!8=LEN(title$)+1
+$(indBuffer%)=title$
+menuBuffer%!12=&00070207
+menuBuffer%!16=192
+menuBuffer%!20=44
+menuBuffer%!24=0
+=menuBuffer%
+=buffer%
+
+DEF PROCaddMenuItem(menuBlock%,itemNo%,flags%,link%,text$)
+LOCAL indBuffer%
+menuBlock%!(28+(itemNo%*24))=flags%
+menuBlock%!(28+(itemNo%*24)+4)=link%
+DIM indBuffer% LEN(text$)+1
+menuBlock%!(28+(itemNo%*24)+8)=&07000121
+menuBlock%!(28+(itemNo%*24)+12)=indBuffer%
+menuBlock%!(28+(itemNo%*24)+16)=0
+menuBlock%!(28+(itemNo%*24)+20)=LEN(text$)+1
+$(indBuffer%)=text$
+ENDPROC
+
+
+DEF PROCinitProg
+LOCAL i%
+REM here are some constants
+BOARD_SIZE = 4
+SQUARE_SIZE = 120
+BOARD_TOP = 394
+BOARD_LEFT = 10
+
+SLIDE_HORIZONTAL = 1
+SLIDE_VERTICAL = 2
+
+STATUS_IDLE = 1
+STATUS_MOVING = 2
+STATUS_WAITING = 3
+STATUS_PANIC = 4
+
+GAME_NONE = 0
+GAME_INPROGRESS = 1
+GAME_WON = 2
+GAME_AFTERWIN = 3
+GAME_GAMEOVER = 4
+
+SPR_SIZE = BOARD_SIZE*(SQUARE_SIZE+8)+12
+
+PROMPT_GAMEOVER = 1
+PROMPT_WIN = 2
+PROMPT_QUIT = 3
+PROMPT_NEWGAME = 4
+PROMPT_SHUTDOWN = 5
+
+DIM grid%(BOARD_SIZE-1, BOARD_SIZE-1)
+DIM undoGrid%(BOARD_SIZE-1, BOARD_SIZE-1)
+DIM merged%(BOARD_SIZE-1, BOARD_SIZE-1)
+DIM moved%(BOARD_SIZE-1,BOARD_SIZE-1)
+
+DIM tileColour%(17,1)
+tileColour%(1,0)=&FFFFFF00
+tileColour%(2,0)=&BBEEEE00
+tileColour%(3,0)=&33BBFF00
+tileColour%(4,0)=&0043CC00
+tileColour%(5,0)=&00438700:tileColour%(5,1)=&FFFFFF00
+tileColour%(6,0)=&00008700:tileColour%(6,1)=&FFFFFF00
+tileColour%(7,0)=&76FFFF00
+tileColour%(8,0)=&00CCCC00
+tileColour%(9,0)=&7687CC00
+tileColour%(10,0)=&33FFFF00
+tileColour%(11,0)=&0087CC00
+tileColour%(12,0)=&7633CC00
+tileColour%(13,0)=&4300CC00
+tileColour%(14,0)=&43008700:tileColour%(14,1)=&FFFFFF00
+tileColour%(15,0)=&FFBA8700
+tileColour%(16,0)=&BA873300
+tileColour%(17,0)=&87000000:tileColour%(17,1)=&FFFFFF00
+gameStatus% = GAME_NONE
+moveStatus% = STATUS_IDLE
+
+bestScore%=0
+
+PROCcreateBoardSprite
+
+ENDPROC
+
+REM -------------------------------------------------------------
+REM misc system routines
+REM -------------------------------------------------------------
+DEF FNsystemVar(var$)
+LOCAL len%
+SYS "OS_ReadVarVal",var$,miscBlock%,1024,0,0 TO ,,len%
+miscBlock%?len%=13
+=$miscBlock%
+
+DEF PROClaunchURI(uri$)
+REM we call the X version of URI_Dispatch, so if
+REM the URI module isn't loaded, no error occurs.
+SYS &6E381,,uri$
+ENDPROC
+
+DEF FNmonotonicTime
+LOCAL t%
+SYS "OS_ReadMonotonicTime" TO t%
+=t%
+
+
+REM -------------------------------------------------------------
+REM error handling
+REM -------------------------------------------------------------
+DEF PROCerror(n%,l%,s$)
+ON ERROR OFF
+IF outputToSprite%=TRUE THEN PROCredirectToScreen
+miscBlock%!0=n%
+$(miscBlock%+4)=s$+" (internal error code "+STR$l%+")"
+SYS "Wimp_ReportError",miscBlock%,%10,appName$
+SYS "Wimp_CloseDown"
+*Unset 12MinsTo9$Running
+ENDPROC
+
