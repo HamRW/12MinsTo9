@@ -9,7 +9,6 @@ cdir <12MinsTo9$BuildDir>.^.Release.!12MinsTo9
 
 AddToRelease !Help
 AddToRelease !Run
-AddToRelease !RunImage
 AddToRelease !Sprites
 AddToRelease !Sprites22
 AddToRelease Templates
