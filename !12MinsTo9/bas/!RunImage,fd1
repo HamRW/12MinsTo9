@@ -563,6 +563,7 @@ DEF PROCshrinkSpriteArea
 LOCAL firstFree%,s%,sprSize%
 sprSize%=sprArea%!0
 SYS "OS_SpriteOp",8+256,sprArea% TO ,,,,,firstFree%
+firstFree%=FNroundToNearest(firstFree%,pageSize%)
 IF firstFree%<sprSize% THEN
   REPEAT
     s%=FNheap_realloc(sprArea%,-pageSize%)
@@ -574,6 +575,10 @@ IF firstFree%<sprSize% THEN
 ENDIF
 
 ENDPROC
+
+DEF FNroundToNearest(a%,m%)
+a%=((a%+m%) DIV m%)*m%
+=a%
 
 REM -------------------------------------------------------------
 REM draws the board and individual squares within that board
@@ -949,7 +954,7 @@ boardIconX2%=miscBlock%!16:boardIconY2%=miscBlock%!20
 
 win_gameEnd%=FNloadTemplate("GameEnd")
 win_check%=FNloadTemplate("Check")
-PROCsetIconText(win_progInfo%,6,"0.97 (18-May-2023)")
+PROCsetIconText(win_progInfo%,6,"0.98 (22-May-2023)")
 
 icon_iconBar%=FNiconBarIcon("!12MinsTo9")
 
