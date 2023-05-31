@@ -14,7 +14,7 @@
 
 Set 12MinsTo9$Dir <Obey$Dir>
 Set 12MinsTo9$Help <Obey$Dir>.!Help
-Set 12MinsTo9$Version "0.90"
+Set 12MinsTo9$Version "1.00"
 Set 12MinsTo9$Web "https://riscos.roberthampton.me.uk/"
 Set 12MinsTo9$Title "12 Mins to 9"
 Set 12MinsTo9$Publisher "Robert Hampton"
